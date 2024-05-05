@@ -127,16 +127,12 @@ class LineLayer(models.Model):
             self.proj_neigh = layers.Conv1d(self.dim, kernel_size=1, input_shape=(None, 2 * self.dim))
 
     def get_endpoint_update(self, ldesc, line_enc, lines_junc_idx):
-        # ldesc is [bs, D, n_junc], line_enc [bs, D, n_lines * 2]  # TODO: need to validate the input shape ordering
+        # ldesc is [bs, n_junc, D], line_enc [bs, n_lines * 2, D]
         # and lines_junc_idx [bs, n_lines * 2]
         # Create one message per line endpoint
-        b_size, endpoints = lines_junc_idx.shape
+        b_size = lines_junc_idx.shape[0]
 
-        batch_range = tf.range(b_size)[:, tf.newaxis]
-        batch_range = tf.tile(batch_range, [1, endpoints])
-        combined_indices = tf.stack([batch_range, lines_junc_idx], axis=-1)
-
-        line_desc = tf.transpose(tf.gather_nd(ldesc, combined_indices), (0, 2, 1))  # channel first
+        line_desc = tf.transpose(gather_like_in_torch(lines_junc_idx, ldesc), (0, 2, 1))  # channel first
         line_desc2 = tf.reverse(tf.reshape(line_desc, (b_size, self.dim, -1, 2)), axis=[-1])
         message = tf.concat([line_desc, tf.identity(tf.reshape(line_desc2, [b_size, self.dim, -1])), tf.transpose(line_enc, (0, 2, 1))], axis=1)
         message = tf.transpose(message, (0, 2, 1))  # back to channel last
