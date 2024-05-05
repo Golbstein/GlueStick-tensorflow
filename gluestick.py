@@ -1,5 +1,15 @@
+import dataclasses
+
 import tensorflow as tf
 from tensorflow.keras import layers, models
+
+
+def dict_to_dataclass(config_dict):
+    fields_list = []
+    for key, value in config_dict.items():
+        fields_list.append((key, type(value)))
+    conf = dataclasses.make_dataclass('Config', fields_list)
+    return conf(**config_dict)
 
 
 def MLP(channels, do_bn=True):
@@ -31,7 +41,7 @@ class EndPtEncoder(models.Model):
 
     def call(self, endpoints, scores):
         b_size, n_pts, _, _ = endpoints.shape
-        endpt_offset = (endpoints[:, :, 1] - endpoints[:, :, 0])[:, :, None]
+        endpt_offset = (endpoints[:, :, 1] - endpoints[:, :, 0])[:, :, None]  # todo: equirectangular distance
         endpt_offset = tf.concat((endpt_offset, -endpt_offset), axis=2)
         endpt_offset = tf.reshape(endpt_offset, (b_size, 2 * n_pts, 2))
         inputs = [tf.reshape(endpoints, (b_size, -1, 2)), endpt_offset, tf.tile(scores, [1, 2])[..., None]]
@@ -229,14 +239,19 @@ class GlueStick(models.Model):
 
     DEFAULT_LOSS_CONF = {"nll_weight": 1.0, "nll_balancing": 0.5}
 
-    def __init__(self, conf):
-        if conf.input_dim != conf.descriptor_dim:
-            self.input_proj = layers.Conv1D(conf.descriptor_dim, kernel_size=1, input_shape=(None, conf.input_dim))
-        self.kenc = KeypointEncoder(conf.descriptor_dim, conf.keypoint_encoder)
-        self.lenc = EndPtEncoder(conf.descriptor_dim, conf.keypoint_encoder)
-        self.gnn = AttentionalGNN(conf.descriptor_dim, conf.GNN_layers, num_line_iterations=conf.num_line_iterations, line_attention=conf.line_attention)
-        self.final_proj = layers.Conv1D(conf.descriptor_dim, kernel_size=1, input_shape=(None, conf.descriptor_dim))
-        self.final_line_proj = layers.Conv1D(conf.descriptor_dim, kernel_size=1, input_shape=(None, conf.descriptor_dim))
+    def __init__(self, conf=None):
+        super().__init__(name='tf-GlueStick')
+        if conf is None:
+            self.conf = dict_to_dataclass(self.default_conf)
+        else:
+            self.conf = conf
+        if self.conf.input_dim != self.conf.descriptor_dim:
+            self.input_proj = layers.Conv1D(self.conf.descriptor_dim, kernel_size=1, input_shape=(None, self.conf.input_dim))
+        self.kenc = KeypointEncoder(self.conf.descriptor_dim, self.conf.keypoint_encoder)
+        self.lenc = EndPtEncoder(self.conf.descriptor_dim, self.conf.keypoint_encoder)
+        self.gnn = AttentionalGNN(self.conf.descriptor_dim, self.conf.GNN_layers, num_line_iterations=self.conf.num_line_iterations, line_attention=self.conf.line_attention)
+        self.final_proj = layers.Conv1D(self.conf.descriptor_dim, kernel_size=1, input_shape=(None, self.conf.descriptor_dim))
+        self.final_line_proj = layers.Conv1D(self.conf.descriptor_dim, kernel_size=1, input_shape=(None, self.conf.descriptor_dim))
         self.bin_score = tf.Variable(1.0, trainable=True, name='bin_score')
         self.line_bin_score = tf.Variable(1.0, trainable=True, name='line_bin_score')
 
@@ -280,7 +295,7 @@ class GlueStick(models.Model):
         _, h0, w0, _ = data["view0"]["image"].shape
         _, h1, w1, _ = data["view1"]["image"].shape
         pred = {}
-        desc0, desc1 = data["descriptors0"].mT, data["descriptors1"].mT
+        desc0, desc1 = data["descriptors0"], data["descriptors1"]
         kpts0, kpts1 = data["keypoints0"], data["keypoints1"]
         n_kpts0, n_kpts1 = kpts0.shape[1], kpts1.shape[1]
         n_lines0, n_lines1 = data["lines0"].shape[1], data["lines1"].shape[1]
@@ -288,8 +303,8 @@ class GlueStick(models.Model):
         lines0 = tf.reshape(data["lines0"], (-1, n_lines0 * 2, 2))
         lines1 = tf.reshape(data["lines1"], (-1, n_lines1 * 2, 2))
 
-        lines_junc_idx0 = tf.reshape(data["lines_junc_idx0"], (-1, n_lines0 * 2))
-        lines_junc_idx1 = tf.reshape(data["lines_junc_idx1"], (-1, n_lines1 * 2))
+        lines_junc_idx0 = tf.cast(tf.reshape(data["lines_junc_idx0"], (-1, n_lines0 * 2)), dtype=tf.int32)
+        lines_junc_idx1 = tf.cast(tf.reshape(data["lines_junc_idx1"], (-1, n_lines1 * 2)), dtype=tf.int32)
 
         if self.conf.input_dim != self.conf.descriptor_dim:
             desc0 = self.input_proj(desc0)
