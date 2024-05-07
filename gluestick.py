@@ -41,7 +41,7 @@ class EndPtEncoder(models.Model):
 
     def call(self, endpoints, scores):
         b_size, n_pts, _, _ = endpoints.shape
-        endpt_offset = (endpoints[:, :, 1] - endpoints[:, :, 0])[:, :, None]  # todo: equirectangular distance
+        endpt_offset = (endpoints[:, :, 1] - endpoints[:, :, 0])[:, :, None]
         endpt_offset = tf.concat((endpt_offset, -endpt_offset), axis=2)
         endpt_offset = tf.reshape(endpt_offset, (b_size, 2 * n_pts, 2))
         inputs = [tf.reshape(endpoints, (b_size, -1, 2)), endpt_offset, tf.tile(scores, [1, 2])[..., None]]
